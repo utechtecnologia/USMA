@@ -22,7 +22,7 @@ function usage($cmd)
 	echo "             -w	Valor 'warning'\n";
 	echo "             -l	Para listar todos os dados recebidos.\n";
 	echo "             -h	Este help!\n";
-	echo "             -M	Mode. SRV/MEM/HD/UPT/ETH\n";
+	echo "             -M	Mode. SRV/MEM/HD/ETH/CFGBKP\n";
 	echo "\n";
 	echo "\n";
 	exit(0);
