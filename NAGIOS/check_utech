@@ -1,0 +1,432 @@
+#!/usr/bin/php -q
+<?php
+
+
+function get_option($value)
+{
+	if(!isset($value) || strlen($value) < 1)
+		return null;
+
+	return $value;
+}
+
+function usage($cmd)
+{
+	echo "\n";
+	echo "USE: $cmd <options>\n";
+	echo "\n";
+	echo "             -H	Host/IP\n";
+	echo "             -P	Porta da API (Padrão 80/443)\n";
+	echo "             -t	Token da API\n";
+	echo "             -c	Valor 'critical'\n";
+	echo "             -w	Valor 'warning'\n";
+	echo "             -l	Para listar todos os dados recebidos.\n";
+	echo "             -h	Este help!\n";
+	echo "             -M	Mode. SRV/MEM/HD/UPT/ETH\n";
+	echo "\n";
+	echo "\n";
+	exit(0);
+}
+
+function get_server_data($params, &$data = null)
+{
+	$error = null;
+	$data = null;
+	if(!is_array($params))
+		return 0;
+
+	if(!isset($params['PORT']) || strlen($params['PORT']) < 1)
+		$addr = "{$params['HOST']}:{$params['PORT']}";
+	else
+		$addr = "{$params['HOST']}";
+
+	$url = "";
+	$url = "{$addr}/monitor?token={$params['TOKEN']}";
+	if($params['verbose'] == true)
+		echo "[get_server_data] - URL=[$url]\n";
+	$ch = curl_init($url);
+	curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "GET");
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+	$result = curl_exec($ch);
+	if(!$result) {
+		$error = curl_error($ch);
+		if($params['verbose'] == true)
+			echo "[get_server_data] - error[$error]\n";
+		curl_close($ch);
+		return 0;
+	}
+
+	$httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+	if($httpcode != 200) {
+
+		$error = curl_error($ch);
+		if($params['verbose'] == true)
+			echo "[get_server_data] httpcode=[$httpcode] - error[$error]\n";
+		curl_close($ch);
+		return $httpcode;
+	}
+
+	$data = json_decode($result, true);
+	curl_close($ch);
+	return 200;
+}
+
+function send_event($state, $message, $exitcode = 0)
+{
+	echo "$state: $message\n";
+	exit($exitcode);
+}
+
+function check_utech_hd($params)
+{
+	if(!is_array($params))
+		send_event("CRITICAL", "Invalid plugin parameters.", 2);
+
+	if(!isset($params['HOST']) || strlen($params['HOST']) < 1)
+		send_event("CRITICAL", "Invalid plugin host.", 2);
+
+	$tok = explode("|", $params['MODE']); 
+	if(!isset($tok) || !isset($tok[1]))
+		send_event("CRITICAL", "Invalid MODE param configuration.", 2);
+
+	$data = null;
+	$rc = get_server_data($params, $data);
+	if($rc != 200) {
+		send_event("CRITICAL", "Error acquiring data from server.", 2);
+	}
+
+	if(!isset($data) || !isset($data['disk']))
+		send_event("CRITICAL", "Error acquiring data DISK from server.", 2);
+
+	$mount = $tok[1];
+	if(!isset($data['disk'][$mount]))
+		send_event("CRITICAL", "No DISK data mount '{$tok[1]}'.", 2);
+
+	$w = 70;
+	$c = 80;
+	if(isset($params) && isset($params['WARNING']))
+		$w = $params['WARNING'];
+	if(isset($params) && isset($params['CRITICAL']))
+		$c = $params['CRITICAL'];
+
+	$disk = $data['disk'][$mount];
+	$percent = null;
+	if(isset($disk) && isset($disk['used_percent']))
+		$percent = $disk['used_percent'];
+
+	if($percent == null)
+		send_event("CRITICAL", "used_percent was {$percent}%", 2);
+
+	if($percent > $c)
+		send_event("CRITICAL", "used_percent was {$percent}%", 2);
+
+	if($percent > $w)
+		send_event("WARNING", "used_percent was {$percent}%", 1);
+
+	send_event("OK", "disk percent {$disk['used_percent']}%", 0);
+}
+
+function check_utech_mem($params)
+{
+	if(!is_array($params))
+		send_event("CRITICAL", "Invalid plugin parameters.", 2);
+
+	if(!isset($params['HOST']) || strlen($params['HOST']) < 1)
+		send_event("CRITICAL", "Invalid plugin host.", 2);
+
+	$tok = explode("|", $params['MODE']); 
+	if(!isset($tok) || !isset($tok[1]))
+		send_event("CRITICAL", "Invalid MODE param configuration.", 2);
+
+	$data = null;
+	$rc = get_server_data($params, $data);
+	if($rc != 200) {
+		send_event("CRITICAL", "Error acquiring data from server.", 2);
+	}
+
+	if(!isset($data) || !isset($data['memory']))
+		send_event("CRITICAL", "Error acquiring data MEMORY from server.", 2);
+
+	$mem = $data['memory'];
+	if(!isset($mem['total']) || !isset($mem['free']))
+		send_event("CRITICAL", "Error acquiring MEMORY stats from server.", 2);
+
+	$w = 70;
+	$c = 80;
+	if(isset($params) && isset($params['WARNING']))
+		$w = $params['WARNING'];
+	if(isset($params) && isset($params['CRITICAL']))
+		$c = $params['CRITICAL'];
+
+
+	$percent = round(($mem['free']*100)/$mem['total'],2);
+
+	if($percent < $c)
+		send_event("CRITICAL", "Memory free {$percent}%", 2);
+
+	if($percent < $w)
+		send_event("WARNING", "Memory free {$percent}%", 1);
+
+	$unit = (1024 * 1024 * 1024);
+	$unit_str = "G";
+	if(isset($tok[1]) && ($tok[1] == 'G' || $tok['1'] == "M" || $tok[1] == "K" || $tok[1] == "T")) {
+		switch($tok[1]) {
+			case "M":
+				$unit_str = "M";
+				$unit = (1024*1024);
+				break;
+			case "K":
+				$unit_str = "K";
+				$unit = 1024;
+				break;
+			case "T":
+				$unit_str = "T";
+				$unit = (1024*1024*1024*1024);
+				break;
+
+		}
+	}
+
+	$free = round($mem['free']/$unit,0);
+	$total = round($mem['total']/$unit,0);
+
+	send_event("OK", "Memory free {$percent}% | MemTotal:{$total}{$unit_str};MemFree:{$free}{$unit_str}", 0);
+}
+
+
+function check_utech_srv($params)
+{
+	if(!is_array($params))
+		send_event("CRITICAL", "Invalid plugin parameters.", 2);
+
+	if(!isset($params['HOST']) || strlen($params['HOST']) < 1)
+		send_event("CRITICAL", "Invalid plugin host.", 2);
+
+	$tok = explode("|", $params['MODE']); 
+	if(!isset($tok) || !isset($tok[1]))
+		send_event("CRITICAL", "Invalid MODE param configuration.", 2);
+
+	$data = null;
+	$rc = get_server_data($params, $data);
+	if($rc != 200) {
+		send_event("CRITICAL", "Error acquiring data from server.", 2);
+	}
+
+	if(!isset($data) || !isset($data['services']))
+		send_event("CRITICAL", "Error acquiring data SERVICES from server.", 2);
+
+	$serv = $tok[1];
+	if(!isset($data['services'][$serv]))
+		send_event("CRITICAL", "Service {$serv} not running!", 2);
+
+	$serv_data = $data['services'][$serv];
+	if(!isset($serv_data['state']) || stristr($serv_data['state'],"UP") == false)
+		send_event("CRITICAL", "Service {$serv} not running!", 2);
+
+
+	$pid = -1;
+	$threads = -1;
+	$memory_usage = -1;
+	if(isset($serv_data['pid']))
+		$pid = $serv_data['pid'];
+	if(isset($serv_data['threads']))
+		$threads = $serv_data['threads'];
+	if(isset($serv_data['memory_usage']))
+		$memory_usage = $serv_data['memory_usage'];
+
+	send_event("OK", "Service {$serv} running! | Pid:{$pid};Threads:{$threads};MemoryUsage:{$memory_usage}", 0);
+}
+
+function check_utech_eth($params)
+{
+	if(!is_array($params))
+		send_event("CRITICAL", "Invalid plugin parameters.", 2);
+
+	if(!isset($params['HOST']) || strlen($params['HOST']) < 1)
+		send_event("CRITICAL", "Invalid plugin host.", 2);
+
+	$tok = explode("|", $params['MODE']); 
+	if(!isset($tok) || !isset($tok[1]))
+		send_event("CRITICAL", "Invalid MODE param configuration.", 2);
+
+	$data = null;
+	$rc = get_server_data($params, $data);
+	if($rc != 200) {
+		send_event("CRITICAL", "Error acquiring data from server.", 2);
+	}
+
+	if(!isset($data) || !isset($data['net']))
+		send_event("CRITICAL", "Error acquiring data NET from server.", 2);
+
+	$iface = $tok[1];
+	if(!isset($data['net'][$iface]))
+		send_event("CRITICAL", "Interface {$iface} unknown state", 2);
+
+	$iface_data = $data['net'][$iface];
+	if(!isset($iface_data['state']) || stristr($iface_data['state'],"UP") == false)
+		send_event("CRITICAL", "Interface {$iface} down!", 2);
+
+	$sent_bytes = -1;
+	$recv_bytes = -1;
+	if(isset($iface_data['sent']) && isset($iface_data['sent']['bytes']))
+		$sent_bytes = $iface_data['sent']['bytes'];
+	if(isset($iface_data['recieved']) && isset($iface_data['recieved']['bytes']))
+		$recv_bytes = $iface_data['recieved']['bytes'];
+
+	send_event("OK", "Interface {$iface} UP | SentBytes:{$sent_bytes};RecvBytes:${recv_bytes}", 0);
+}
+
+
+function check_utech_cfg_backup($params)
+{
+	date_default_timezone_set('America/Sao_Paulo');
+
+	if(!is_array($params))
+		send_event("CRITICAL", "Invalid plugin parameters.", 2);
+
+	if(!isset($params['HOST']) || strlen($params['HOST']) < 1)
+		send_event("CRITICAL", "Invalid plugin host.", 2);
+
+	$tok = explode("|", $params['MODE']);
+	if(!isset($tok) || !isset($tok[1]))
+		send_event("CRITICAL", "Invalid MODE param configuration.", 2);
+
+	$data = null;
+	$rc = get_server_data($params, $data);
+	if($rc != 200) {
+		send_event("CRITICAL", "Error acquiring data from server.", 2);
+	}
+
+	if(!isset($data))
+		send_event("CRITICAL", "Error acquiring data from server.", 2);
+
+	$days = $tok[1];
+	if(!isset($data['last_cfg_backup']['timestamp']))
+		send_event("CRITICAL", "Last backup timestamp unknow!", 2);
+
+	$timestamp = $data['last_cfg_backup']['timestamp'];
+	$now = time();
+
+	$last = "-";
+	if(isset($data['last_cfg_backup']['date']))
+		$last = $data['last_cfg_backup']['date'];
+
+	if($params['verbose'] == true) {
+		echo "[check_utech_cfg_backup] - now=[$now] timestamp=[$timestamp]\n";
+	}
+
+	$diff = floor(($now-$timestamp)/86400);
+	if($diff >= $days)
+		send_event("CRITICAL", "Very old CFG Backup! ($diff days) | Last: {$last}", 2);
+
+	send_event("OK", "CFG Backup OK | $diff days from last backup", 0);
+}
+
+
+
+
+##############################################################################
+#### INIT....
+##############################################################################
+
+$LIST = false;
+$HOST = null;
+$PORT = 0;
+$TOKEN = null;
+$WARNING = null;
+$CRITICAL = NULL;
+$MODE = null;
+$VERBOSE = false;
+
+if(count($argv) < 2)
+	usage($argv[0]);
+
+$options = getopt("c:hH:lM:t:vw:");
+
+foreach($options as $k => $v) {
+	if($k == "H")
+		$HOST = get_option($v);
+	if($k == "t")
+		$TOKEN = get_option($v);
+	if($k == "l")
+		$LIST = true;
+	if($k == "c")
+		$CRITICAL = get_option($v);
+	if($k == "w")
+		$WARNING = get_option($v);
+	if($k == "M")
+		$MODE = get_option($v);
+	if($k == "h")
+		usage($argv[0]);
+	if($k == "v")
+		$VERBOSE = true;
+
+}
+
+$params = array("HOST" => $HOST,
+		"PORT" => $PORT,
+		"MODE" => $MODE,
+		"TOKEN" => $TOKEN,
+		"WARNING" => $WARNING,
+		"CRITICAL" => $CRITICAL,
+		"verbose" => $VERBOSE
+);
+
+
+if($HOST == null || strlen($HOST) < 1) {
+	send_event("CRITICAL", "Invalid null HOST.", 1);
+}
+
+
+if($TOKEN == null || strlen($TOKEN) < 1) {
+	send_event("CRITICAL", "Invalid null token.", 1);
+}
+
+if($LIST == true) {
+	$list = null;
+	$rc = get_server_data($params, $list);
+	if($rc != 200) {
+		echo "Get list return http error $rc.\n";
+		exit(1);
+	}
+	print_r($list);
+	exit(0);
+}
+
+
+##################
+### Check Mode ###
+##################
+
+if(strncmp($MODE, "HD|", 3) === 0) {
+	check_utech_hd($params);
+	exit(2);
+} else if(strncmp($MODE, "SRV|", 3) === 0) {
+	check_utech_srv($params);
+	exit(2);
+} else if(strncmp($MODE, "MEM|", 3) === 0) {
+	check_utech_mem($params);
+	exit(2);
+} else if(strncmp($MODE, "ETH|", 3) === 0) {
+	check_utech_eth($params);
+	exit(2);
+} else if(strncmp($MODE, "CFGBKP|", 3) === 0) {
+	check_utech_cfg_backup($params);
+	exit(2);
+} else {
+	send_event("CRITICAL", "Invalid plugin mode.", 2);
+	exit(2);
+}
+/*
+print_r($options);
+echo "HELP=[$HELP]\n";
+echo "HOST=[$HOST]\n";
+echo "TOKEN=[$TOKEN]\n";
+echo "LIST=[$LIST]\n";
+echo "CRITICAL=[$CRITICAL]\n";
+echo "WARNING=[$WARNING]\n";
+echo "MODE=[$MODE]\n";
+*/
+
+
+?>
