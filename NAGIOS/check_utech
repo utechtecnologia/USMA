@@ -22,7 +22,8 @@ function usage($cmd)
 	echo "             -w	Valor 'warning'\n";
 	echo "             -l	Para listar todos os dados recebidos.\n";
 	echo "             -h	Este help!\n";
-	echo "             -M	Mode. SRV/MEM/HD/ETH/CFGBKP\n";
+	echo "             -s   Utilizar https\n";
+	echo "             -M	Mode. SRV/MEM/HD/UPT/ETH\n";
 	echo "\n";
 	echo "\n";
 	exit(0);
@@ -41,7 +42,11 @@ function get_server_data($params, &$data = null)
 		$addr = "{$params['HOST']}";
 
 	$url = "";
-	$url = "{$addr}/monitor?token={$params['TOKEN']}";
+	if(isset($params['USEHTTPS']) && $params['USEHTTPS'] == true)
+		$url = "https://{$addr}/monitor?token={$params['TOKEN']}";
+	else
+		$url = "http://{$addr}/monitor?token={$params['TOKEN']}";
+
 	if($params['verbose'] == true)
 		echo "[get_server_data] - URL=[$url]\n";
 	$ch = curl_init($url);
@@ -294,7 +299,7 @@ function check_utech_cfg_backup($params)
 	$data = null;
 	$rc = get_server_data($params, $data);
 	if($rc != 200) {
-		send_event("CRITICAL", "Error acquiring data from server.", 2);
+		send_event("CRITICAL", "Error acquiring data from server. RC:$rc", 2);
 	}
 
 	if(!isset($data))
@@ -337,11 +342,12 @@ $WARNING = null;
 $CRITICAL = NULL;
 $MODE = null;
 $VERBOSE = false;
+$USEHTTPS = false;
 
 if(count($argv) < 2)
 	usage($argv[0]);
 
-$options = getopt("c:hH:lM:t:vw:");
+$options = getopt("c:hH:lM:st:vw:");
 
 foreach($options as $k => $v) {
 	if($k == "H")
@@ -358,6 +364,8 @@ foreach($options as $k => $v) {
 		$MODE = get_option($v);
 	if($k == "h")
 		usage($argv[0]);
+	if($k == "s")
+		$USEHTTPS = true;
 	if($k == "v")
 		$VERBOSE = true;
 
@@ -369,6 +377,7 @@ $params = array("HOST" => $HOST,
 		"TOKEN" => $TOKEN,
 		"WARNING" => $WARNING,
 		"CRITICAL" => $CRITICAL,
+		"USEHTTPS" => $USEHTTPS,
 		"verbose" => $VERBOSE
 );
 
