@@ -1,0 +1,272 @@
+#!/usr/bin/php -q
+<?php
+
+function get_partner_token($email, $password)
+{
+
+    if(!isset($email) || !isset($password)) {
+        return array("token" => "null", "httpcode" => -1, "error" => true, "errormsg" => "Invalid email/password");
+    }
+
+    $headers = array('Accept: application/json',
+                     'Content-Type: application/x-www-form-urlencoded');
+
+     $fields = array(
+         "email" => "$email",
+         "password" => "$password"
+     );
+
+    $url = "https://partner.gupshup.io/partner/account/login";
+
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($fields));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    $response = curl_exec($ch);
+    $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if (isset($response) && ($httpcode >= 200 && $httpcode < 300)) {
+        $rdata = json_decode($response);
+
+        if(isset($rdata) && isset($rdata->token))
+            return array("token" => "{$rdata->token}", "httpcode" => $httpcode, "error" => false);
+
+        return array("token" => null, "httpcode" => $httpcode, "error" => true);
+    }
+
+    $emsg = '';
+    if($response) {
+        $rdata = json_decode($response);
+        if(isset($rdata) && isset($rdata->message))
+            $emsg = $rdata->message;
+    }
+    return array("token" => null, "httpcode" => $httpcode, "error" => true, "errormsg" => $emsg);
+}
+
+
+function get_appid_token($partner_token, $appid)
+{
+    if(!isset($partner_token))
+        return array("error" => true, "msg" => "Invalid partner token");
+
+    if(!isset($appid))
+        return array("error" => true, "msg" => "Invalid appId");
+
+    $headers = array("Accept: application/json",
+                     "token: $partner_token");
+
+    $url = "https://partner.gupshup.io/partner/app/$appid/token";
+
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, false);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    $response = curl_exec($ch);
+    $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if (isset($response) && ($httpcode >= 200 && $httpcode < 300)) {
+        $rdata = json_decode($response);
+
+        if(isset($rdata) && isset($rdata->token))
+            return array("token" => "{$rdata->token->token}",
+                         "authoriserId" => "{$rdata->token->authoriserId}",
+                         "httpcode" => $httpcode, "error" => false);
+
+        return array("token" => null, "authoriserId" => null, "httpcode" => $httpcode, "error" => true);
+    }
+
+    $emsg = '';
+    if($response) {
+        $rdata = json_decode($response);
+        if(isset($rdata) && isset($rdata->message))
+            $emsg = $rdata->message;
+    }
+    return array("token" => null, "httpcode" => $httpcode, "error" => true, "errormsg" => $emsg);
+
+}
+
+function get_appid_wallet($access_token, $appid)
+{
+    if(!isset($access_token))
+        return array("error" => true, "msg" => "Invalid access token");
+
+    if(!isset($appid))
+        return array("error" => true, "msg" => "Invalid appId");
+
+    $headers = array("Accept: application/json",
+                     "token: $access_token");
+
+    $url = "https://partner.gupshup.io/partner/app/$appid/wallet/balance";
+
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, false);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    $response = curl_exec($ch);
+    $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    $emsg = '';
+    if (isset($response) && ($httpcode >= 200 && $httpcode < 300)) {
+        $rdata = json_decode($response);
+
+        if(isset($rdata) && isset($rdata->walletResponse) && isset($rdata->walletResponse->currentBalance))
+            return array("currentBalance" => $rdata->walletResponse->currentBalance,
+                         "currency" => $rdata->walletResponse->currency,
+                         "httpcode" => $httpcode, "error" => false);
+
+        $emsg = "Invalid data: $response";
+        return array("httpcode" => $httpcode, "error" => true, "errormsg" => $emsg);
+    }
+
+    if($response) {
+        $rdata = json_decode($response);
+        if(isset($rdata) && isset($rdata->message))
+            $emsg = $rdata->message;
+    }
+    return array("token" => null, "httpcode" => $httpcode, "error" => true, "errormsg" => $emsg);
+}
+
+function get_option($value)
+{
+    if(!isset($value) || strlen($value) < 1)
+        return null;
+
+    return $value;
+}
+
+function usage($cmd)
+{
+	echo "Plugin Nagios Gupshup\n";
+	echo "USE: $cmd <options>\n";
+	echo "\n";
+	echo "             -m	E-mail de login (partner)\n";
+	echo "             -p	Senha de acesso.\n";
+	echo "             -a	appID\n";
+    echo "             -c	Valor 'critical'\n";
+	echo "             -w	Valor 'warning'\n";
+	echo "             -h	Este help!\n";
+	echo "             -s   Utilizar https\n";
+	echo "\n";
+	echo "\n";
+	exit(0);
+}
+
+##############################################################################
+#### INIT....
+##############################################################################
+
+$EMAIL = null;
+$PASS = null;
+$APPID = null;
+$WARNING = null;
+$CRITICAL = NULL;
+$VERBOSE = false;
+$USEHTTPS = false;
+
+if(count($argv) < 3)
+	usage($argv[0]);
+
+$options = getopt("m:p:a:c:svw:h");
+
+foreach($options as $k => $v) {
+	if($k == "m")
+		$EMAIL = get_option($v);
+	if($k == "p")
+		$PASS = get_option($v);
+	if($k == "a")
+		$APPID = get_option($v);
+	if($k == "c")
+		$CRITICAL = get_option($v);
+	if($k == "w")
+		$WARNING = get_option($v);
+	if($k == "h")
+		usage($argv[0]);
+	if($k == "s")
+		$USEHTTPS = true;
+	if($k == "v")
+		$VERBOSE = true;
+
+}
+
+function send_event($state, $message, $exitcode = 0)
+{
+	echo "$state: $message\n";
+	exit($exitcode);
+}
+
+if(!isset($EMAIL) || strlen($EMAIL) < 1)
+    send_event("CRITICAL", "Invalid e-mail account login.", 1);
+
+if(!isset($PASS) || strlen($PASS) < 1)
+    send_event("CRITICAL", "Invalid password account login.", 1);
+
+if(!isset($APPID) || strlen($APPID) < 1)
+    send_event("CRITICAL", "Invalid appID.", 1);
+
+
+if($VERBOSE)
+    echo "Get Parner Token...";
+
+$partner = get_partner_token($EMAIL, $PASS);
+if(!isset($partner) || !isset($partner['token'])) {
+    if(isset($partner) && isset($partner['errormsg']))
+        $emsg = "[{$partner['errormsg']}]";
+    send_event("CRITICAL","GET partner token error! $emsg", 1);
+}
+
+if($VERBOSE)
+    echo "Get access Token...\n";
+
+$acc_token = get_appid_token($partner['token'], $APPID);
+if(!isset($acc_token) || !isset($acc_token['authoriserId']) || !isset($acc_token['token'])) {
+
+    if(isset($acc_token) && isset($acc_token['errormsg']))
+        $emsg = "[{$partner['errormsg']}]";
+    
+    send_event("CRITICAL", "GET access token error! $emsg", 1);
+}
+
+if($VERBOSE)
+    echo "get wallet!";
+
+
+$wallet = get_appid_wallet($acc_token['token'], $APPID);
+
+$w = 10;
+$c = 5;
+if(isset($params) && isset($params['WARNING']))
+    $w = $params['WARNING'];
+if(isset($params) && isset($params['CRITICAL']))
+    $c = $params['CRITICAL'];
+
+if(!isset($wallet) || !isset($wallet['currentBalance'])) {
+    if(isset($acc_token) && isset($acc_token['errormsg']))
+        $emsg = "[{$partner['errormsg']}]";
+    
+    send_event("CRITICAL", "GET wallet data error! $emsg", 1);
+
+}
+
+$curr = "USD";
+if(isset($wallet['currency']))
+    $curr = $wallet['currency'];
+
+$balance = $wallet['currentBalance'];
+if($balance < $c)
+    send_event("CRITICAL", "Low balance - $curr $balance", 1);
+if($balance < $w)
+    send_event("WARNING", "Low balance - $curr $balance", 1);
+
+send_event("OK", "Normal balance - $curr $balance", 0);
+
+?>
