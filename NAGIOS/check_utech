@@ -281,6 +281,41 @@ function check_utech_eth($params)
 	send_event("OK", "Interface {$iface} UP | SentBytes:{$sent_bytes};RecvBytes:${recv_bytes}", 0);
 }
 
+function check_utech_trunks($params)
+{
+	if(!is_array($params))
+		send_event("CRITICAL", "Invalid plugin parameters.", 2);
+
+	if(!isset($params['HOST']) || strlen($params['HOST']) < 1)
+		send_event("CRITICAL", "Invalid plugin host.", 2);
+
+	$tok = explode("|", $params['MODE']);
+	if(!isset($tok) || !isset($tok[1]))
+		send_event("CRITICAL", "Invalid MODE param configuration.", 2);
+
+	$data = null;
+	$rc = get_server_data($params, $data);
+	if($rc != 200) {
+		send_event("CRITICAL", "Error acquiring data from server.", 2);
+	}
+
+	if(!isset($data) || !isset($data['trunks']))
+		send_event("CRITICAL", "Error acquiring data TRUNK from server.", 2);
+
+	$trunk = $tok[1];
+	if(!isset($data['trunks'][$trunk]))
+		send_event("CRITICAL", "Trunk {$trunk} unknown state", 2);
+
+	$trunk_data = $data['trunks'][$trunk];
+
+	if(!isset($trunk_data['state']) || stristr($trunk_data['disable'],"false") == false)
+		send_event("WARNING", "Trunk {$trunk} disabled", 1);
+
+	if(!isset($trunk_data['state']) || strcmp($trunk_data['state'],"Reachable") != 0)
+		send_event("CRITICAL", "Trunk {$trunk} Unreachable", 2);
+
+	send_event("OK", "Trunk {$trunk} Reachable", 0);
+}
 
 function check_utech_cfg_backup($params)
 {
@@ -421,6 +456,9 @@ if(strncmp($MODE, "HD|", 3) === 0) {
 	exit(2);
 } else if(strncmp($MODE, "CFGBKP|", 3) === 0) {
 	check_utech_cfg_backup($params);
+	exit(2);
+} else if(strncmp($MODE, "TRUNK|", 3) === 0) {
+	check_utech_trunks($params);
 	exit(2);
 } else {
 	send_event("CRITICAL", "Invalid plugin mode.", 2);
