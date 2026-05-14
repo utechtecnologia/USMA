@@ -1,6 +1,7 @@
 #!/usr/bin/php -q
 <?php
 
+$DEBUG=true;
 
 function get_option($value)
 {
@@ -31,6 +32,8 @@ function usage($cmd)
 
 function get_server_data($params, &$data = null)
 {
+	global $DEBUG;
+
 	$error = null;
 	$data = null;
 	if(!is_array($params))
@@ -49,6 +52,10 @@ function get_server_data($params, &$data = null)
 
 	if($params['verbose'] == true)
 		echo "[get_server_data] - URL=[$url]\n";
+
+	if($DEBUG == true)
+		error_log("URL=[$url]\n", 3, "/usr/local/nagios/var/checkutech.log");
+
 	$ch = curl_init($url);
 	curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "GET");
 	curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
@@ -62,6 +69,10 @@ function get_server_data($params, &$data = null)
 	}
 
 	$httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+	if($DEBUG == true) {
+		error_log("Data=[$result]\n", 3, "/usr/local/nagios/var/checkutech.log");
+		error_log("Code=[$httpcode]\n", 3, "/usr/local/nagios/var/checkutech.log");
+	}
 	if($httpcode != 200) {
 
 		$error = curl_error($ch);
@@ -228,7 +239,6 @@ function check_utech_srv($params)
 	if(!isset($serv_data['state']) || stristr($serv_data['state'],"UP") == false)
 		send_event("CRITICAL", "Service {$serv} not running!", 2);
 
-
 	$pid = -1;
 	$threads = -1;
 	$memory_usage = -1;
@@ -250,7 +260,7 @@ function check_utech_eth($params)
 	if(!isset($params['HOST']) || strlen($params['HOST']) < 1)
 		send_event("CRITICAL", "Invalid plugin host.", 2);
 
-	$tok = explode("|", $params['MODE']); 
+	$tok = explode("|", $params['MODE']);
 	if(!isset($tok) || !isset($tok[1]))
 		send_event("CRITICAL", "Invalid MODE param configuration.", 2);
 
@@ -316,6 +326,65 @@ function check_utech_trunks($params)
 
 	send_event("OK", "Trunk {$trunk} Reachable", 0);
 }
+
+function check_utech_cpu_load($params)
+{
+	if(!is_array($params))
+		send_event("CRITICAL", "Invalid plugin parameters.", 2);
+
+	if(!isset($params['HOST']) || strlen($params['HOST']) < 1)
+		send_event("CRITICAL", "Invalid plugin host.", 2);
+
+	if(!isset($params['MODE']) || strlen($params['MODE']) < 1)
+		send_event("CRITICAL", "No MODE plugin config.", 2);
+
+	$tok = explode("|", $params['MODE']);
+	if(!isset($tok) || !isset($tok[1]))
+		send_event("CRITICAL", "Invalid MODE param configuration.", 2);
+
+        $n = explode(",", $tok[1]);
+        if(!isset($n) || !is_array($n) || count($n) < 6)
+		send_event("CRITICAL", "Invalid LOAD parameters. Example: LOAD|0.7,0.6,0.5,1.5,1.2,1.0", 2);
+
+        foreach($n as $v) {
+		if(!isset($v) || strlen($v) < 1 || !is_float((float)$v))
+			send_event("CRITICAL", "Invalid LOAD parameters. Values must be float", 2);
+        }
+
+	$data = null;
+	$rc = get_server_data($params, $data);
+	if($rc != 200) {
+		send_event("CRITICAL", "Error acquiring data from server.", 2);
+	}
+
+	$keys = array('now', '5min', '15min');
+
+	if(!isset($data) || !isset($data['load']) || !is_array($data['load']))
+		send_event("CRITICAL", "Error acquiring data LOAD from server.", 2);
+
+        $load = $data['load'];
+	$list = "";
+	foreach($keys as $k) {
+		if(strlen($list) > 1)
+			$list .= ";";
+		$list .= "$k={$load[$k]}";
+	}
+
+	foreach ($keys as $index => $key) {
+		$current_value = (float)$load[$key];
+		$w_limit = (float)$n[$index];
+		$c_limit = (float)$n[$index + 3];
+
+		if ($current_value >= $c_limit)
+			send_event("CRITICAL", "CPU load $key : $current_value (Max: $c_limit)|$list", 2);
+
+		if ($current_value >= $w_limit)
+			send_event("WARNING", "CPU load $key : $current_value (Max: $w_limit)|$list", 1);
+	}
+	send_event("OK", "Load OK|$list", 0);
+}
+
+
 
 function check_utech_cfg_backup($params)
 {
@@ -459,6 +528,9 @@ if(strncmp($MODE, "HD|", 3) === 0) {
 	exit(2);
 } else if(strncmp($MODE, "TRUNK|", 3) === 0) {
 	check_utech_trunks($params);
+	exit(2);
+} else if(strncmp($MODE, "LOAD|", 3) === 0) {
+	check_utech_cpu_load($params);
 	exit(2);
 } else {
 	send_event("CRITICAL", "Invalid plugin mode.", 2);
